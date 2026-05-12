@@ -6,16 +6,64 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import {spawn, ChildProcess} from "child_process";
 
+type ExecutionResult = {
+	stdout: string;
+	stderr: string;
+	imageData?: string;
+};
+
+type NotebookOutput =
+	| {
+		output_type: "stream";
+		name: "stdout" | "stderr";
+		text: string;
+	}
+	| {
+		output_type: "display_data";
+		data: {
+			"image/png": string;
+		};
+		metadata: Record<string, never>;
+	};
+
+type NotebookCodeCell = {
+	cell_type: "code";
+	source: string[] | string;
+	outputs?: NotebookOutput[];
+	execution_count?: number;
+	metadata?: {
+		jupyter?: {
+			is_executing: boolean;
+		};
+		[key: string]: unknown;
+	};
+};
+
+type NotebookCell = NotebookCodeCell | {
+	cell_type: string;
+	source?: string[] | string;
+	[key: string]: unknown;
+};
+
+type Notebook = {
+	cells: NotebookCell[];
+};
+
+type PendingExecution = {
+	resolve: (result: ExecutionResult) => void;
+	reject: (error: Error) => void;
+};
+
+function toError(error: unknown): Error {
+	return error instanceof Error ? error : new Error(String(error));
+}
+
 export class CodeExecutor {
 	private currentNotePath: string | null = null;
 	private pythonPath: string;
 	private pythonProcess: ChildProcess | null = null;
 	private isProcessReady = false;
-	private executionQueue: Array<{
-		code: string;
-		resolve: (result: any) => void;
-		reject: (error: any) => void;
-	}> = [];
+	private executionQueue: PendingExecution[] = [];
 
 	constructor(private plugin: JupyMDPlugin, pythonPath: string, private app: App) {
 		this.pythonPath = pythonPath
@@ -27,11 +75,7 @@ export class CodeExecutor {
 	}
 
 	private notifyOutputsUpdated(notePath: string) {
-		if (typeof document === "undefined") {
-			return;
-		}
-
-		document.dispatchEvent(new CustomEvent(OUTPUTS_UPDATED_EVENT, {
+		activeDocument.dispatchEvent(new CustomEvent(OUTPUTS_UPDATED_EVENT, {
 			detail: {path: notePath},
 		}));
 	}
@@ -133,11 +177,11 @@ export class CodeExecutor {
 
 	private async getNotebookCodeBlocks(ipynbPath: string): Promise<CodeBlock[]> {
 		const raw = await fs.readFile(ipynbPath, "utf-8");
-		const notebook = JSON.parse(raw);
+		const notebook = JSON.parse(raw) as Notebook;
 
 		return notebook.cells
-			.filter((cell: { cell_type: string }) => cell.cell_type === "code")
-			.map((cell: { source: string[] | string }, cellIndex: number) => ({
+			.filter((cell): cell is NotebookCodeCell => cell.cell_type === "code")
+			.map((cell, cellIndex: number) => ({
 				code: Array.isArray(cell.source) ? cell.source.join("") : cell.source ?? "",
 				cellIndex,
 			}));
@@ -155,13 +199,9 @@ export class CodeExecutor {
 		return codeBlocks.filter((codeBlock) => codeBlock.cellIndex === cellIndex);
 	}
 
-	private applyExecutionResultToCell(cell: any, result: {
-		stdout: string;
-		stderr: string;
-		imageData?: string;
-	}) {
+	private applyExecutionResultToCell(cell: NotebookCodeCell, result: ExecutionResult) {
 		const {stdout, stderr, imageData} = result;
-		const outputs: any[] = [];
+		const outputs: NotebookOutput[] = [];
 
 		if (stdout && stdout.trim()) {
 			outputs.push({
@@ -194,22 +234,6 @@ export class CodeExecutor {
 
 		if (!cell.metadata) cell.metadata = {};
 		cell.metadata.jupyter = {is_executing: false};
-	}
-
-	private getExecutionEnv(): NodeJS.ProcessEnv {
-		const env = {...process.env};
-		const pythonPath = this.plugin.settings.pythonInterpreter;
-
-		if (pythonPath) {
-			const pythonDir = path.dirname(pythonPath);
-			env.PATH = `${pythonDir}${path.delimiter}${env.PATH || ""}`;
-
-			if (pythonDir.endsWith("bin") || pythonDir.endsWith("Scripts")) {
-				env.VIRTUAL_ENV = path.dirname(pythonDir);
-			}
-		}
-
-		return env;
 	}
 
 	async executeCodeBlock(codeBlock: CodeBlock, mode: CodeExecutionMode = "cell") {
@@ -297,10 +321,8 @@ export class CodeExecutor {
 
 		try {
 			const raw = await fs.readFile(ipynbPath, "utf-8");
-			const notebook = JSON.parse(raw);
-			const notebookCodeCells = notebook.cells.filter((cell: {
-				cell_type: string
-			}) => cell.cell_type === "code");
+			const notebook = JSON.parse(raw) as Notebook;
+			const notebookCodeCells = notebook.cells.filter((cell): cell is NotebookCodeCell => cell.cell_type === "code");
 
 			for (const codeBlock of codeBlocks) {
 				const cell = notebookCodeCells[codeBlock.cellIndex];
@@ -467,7 +489,6 @@ while True:
 				this.plugin.settings.pythonInterpreter,
 				["-c", initCode],
 				{
-					env: this.getExecutionEnv(),
 					cwd: workingDir
 				}
 			);
@@ -501,8 +522,8 @@ while True:
 								currentExecution.reject(new Error("Failed to parse execution result"));
 								initOutput = "";
 							}
-						} catch (e) {
-							currentExecution.reject(e);
+						} catch (error) {
+							currentExecution.reject(toError(error));
 							initOutput = "";
 						}
 					}
@@ -516,7 +537,6 @@ while True:
 			});
 
 			pythonProcess.on("close", (code) => {
-				console.log("Python process closed with code:", code);
 				if (this.pythonProcess === pythonProcess) {
 					this.pythonProcess = null;
 					this.isProcessReady = false;
@@ -533,10 +553,10 @@ while True:
 			pythonProcess.on("error", (error) => {
 				new Notice("Python process error, check console for details")
 				console.error("Python process error:", error);
-				reject(error);
+				reject(toError(error));
 			});
 
-			setTimeout(() => {
+			activeWindow.setTimeout(() => {
 				if (!this.isProcessReady) {
 					reject(new Error("Python process initialization timeout"));
 				}
@@ -552,7 +572,7 @@ while True:
 		await this.initializePythonProcess();
 
 		return new Promise((resolve, reject) => {
-			this.executionQueue.push({code, resolve, reject});
+			this.executionQueue.push({resolve, reject});
 
 			if (!this.pythonProcess || !this.pythonProcess.stdin) {
 				reject(new Error("Python process not available"));
@@ -581,7 +601,7 @@ while True:
 				processToKill.stdin?.write("EXIT\n");
 
 				// wait until it actually exits
-				processToKill.once('exit', (code, signal) => {
+				processToKill.once('exit', () => {
 					if (this.pythonProcess === processToKill) {
 						this.pythonProcess = null;
 						this.isProcessReady = false;
@@ -601,8 +621,8 @@ while True:
 					resolve();
 				});
 
-				processToKill.once('error', (err) => {
-					reject(err);
+				processToKill.once('error', (error) => {
+					reject(toError(error));
 				});
 
 				processToKill.kill();
