@@ -1,7 +1,5 @@
 import {App, PluginSettingTab, Setting, Notice} from "obsidian";
-import {CodeExecutor} from "./CodeExecutor";
 import JupyMDPlugin from "../main";
-import {validatePythonPath} from "../utils/pythonPathUtils";
 import {installLibs} from "../utils/helpers";
 import {KernelSelectorModal} from "./KernelSelector";
 import {formatKernelLabel, getInterpreterInfo} from "../utils/kernelDiscovery";
@@ -18,11 +16,10 @@ export class JupyMDSettingTab extends PluginSettingTab {
 		const {containerEl} = this;
 		containerEl.empty();
 
-		const desc = document.createDocumentFragment();
-		const descWrapper = document.createElement("div");
-		const summaryEl = descWrapper.createEl("div");
-		const pathEl = descWrapper.createEl("div");
-		desc.appendChild(descWrapper);
+		const desc = createFragment();
+		const descWrapper = desc.createDiv();
+		const summaryEl = descWrapper.createDiv();
+		const pathEl = descWrapper.createDiv();
 		void this.updateInterpreterDescription(summaryEl, pathEl);
 
 		new Setting(containerEl)
@@ -43,23 +40,25 @@ export class JupyMDSettingTab extends PluginSettingTab {
 				btn
 					.setButtonText("Install")
 					.setCta()
-					.onClick(async () => {
+					.onClick(() => {
 						new Notice("Installing libraries...");
 
-						await installLibs(this.plugin.settings.pythonInterpreter, "jupytext matplotlib")
+						void installLibs(this.plugin.settings.pythonInterpreter, "jupytext matplotlib")
 					})
 			);
 
-		containerEl.createEl("h4", {text: "General"});
+		new Setting(containerEl)
+			.setName("General")
+			.setHeading();
 
 		new Setting(containerEl)
 			.setName("Jupyter notebook editor launch command")
 			.setDesc("Specify the command to launch Jupyter notebooks in your preferred editor (e.g., 'code' for VS Code, 'jupyter-lab' for Jupyter Lab, etc.)")
 			.addText((text) => {
 				text.setValue(this.plugin.settings.notebookEditorCommand)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.notebookEditorCommand = value;
-						await this.plugin.saveSettings();
+						void this.plugin.saveSettings();
 					});
 			})
 
@@ -68,9 +67,9 @@ export class JupyMDSettingTab extends PluginSettingTab {
 			.setDesc("When disabled, the default Obsidian code block will be used. Requires restart to take effect.")
 			.addToggle((toggle) => {
 				toggle.setValue(this.plugin.settings.enableCodeBlocks)
-				toggle.onChange(async (value) => {
+				toggle.onChange((value) => {
 					this.plugin.settings.enableCodeBlocks = value;
-					await this.plugin.saveSettings();
+					void this.plugin.saveSettings();
 				})
 			})
 
@@ -79,9 +78,9 @@ export class JupyMDSettingTab extends PluginSettingTab {
 			.setDesc("When disabled, linked markdown and Jupyter notebook files will have to be synced manually through the \"JupyMD: Sync files\" command. Disable if experiencing sync issues.")
 			.addToggle((toggle) => {
 				toggle.setValue(this.plugin.settings.autoSync)
-				toggle.onChange(async (value) => {
+				toggle.onChange((value) => {
 					this.plugin.settings.autoSync = value;
-					await this.plugin.saveSettings();
+					void this.plugin.saveSettings();
 				})
 			})
 
@@ -90,9 +89,9 @@ export class JupyMDSettingTab extends PluginSettingTab {
 			.setDesc("When disabled, changes made in a Jupyter notebook file will always be overwritten by changes made in its paired markdown file. Enabling may cause sync issues.")
 			.addToggle((toggle) => {
 				toggle.setValue(this.plugin.settings.bidirectionalSync)
-				toggle.onChange(async (value) => {
+				toggle.onChange((value) => {
 					this.plugin.settings.bidirectionalSync = value;
-					await this.plugin.saveSettings();
+					void this.plugin.saveSettings();
 				})
 			})
 
@@ -101,9 +100,9 @@ export class JupyMDSettingTab extends PluginSettingTab {
 			.setDesc("When enabled, running code from an unpaired note will first create and pair a Jupyter notebook, then execute the requested code.")
 			.addToggle((toggle) => {
 				toggle.setValue(this.plugin.settings.autoConvertToNotebookOnRun)
-				toggle.onChange(async (value) => {
+				toggle.onChange((value) => {
 					this.plugin.settings.autoConvertToNotebookOnRun = value;
-					await this.plugin.saveSettings();
+					void this.plugin.saveSettings();
 				})
 			})
 	}
