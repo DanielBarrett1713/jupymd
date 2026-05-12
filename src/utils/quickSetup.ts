@@ -1,4 +1,4 @@
-import {App, Notice, Platform} from "obsidian";
+import {App, FileSystemAdapter, Notice, Platform} from "obsidian";
 import * as path from "path";
 import * as fs from "fs/promises";
 import {exec} from "child_process";
@@ -9,14 +9,18 @@ import {getDefaultPythonPath} from "./pythonPathUtils";
 
 const execAsync = promisify(exec);
 
+function getErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
 export async function runQuickSetup(
 	app: App,
 	plugin: JupyMDPlugin,
 	basePythonPath?: string,
 	envNameInput?: string
 ): Promise<boolean> {
-	const adapter = app.vault.adapter as any;
-	if (!adapter.getBasePath) {
+	const adapter = app.vault.adapter;
+	if (!(adapter instanceof FileSystemAdapter)) {
 		new Notice("Quick setup is only supported on local file systems.");
 		return false;
 	}
@@ -52,9 +56,9 @@ export async function runQuickSetup(
 
 		new Notice(`Quick setup complete! Virtual environment '${envName}' created successfully.`);
 		return true;
-	} catch (error: any) {
+	} catch (error) {
 		console.error("Quick setup failed:", error);
-		new Notice(`Quick setup failed: ${error.message || error}`);
+		new Notice(`Quick setup failed: ${getErrorMessage(error)}`);
 		return false;
 	}
 }
