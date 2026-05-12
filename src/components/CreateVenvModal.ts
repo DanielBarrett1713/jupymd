@@ -239,7 +239,11 @@ export class CreateVenvModal extends FuzzySuggestModal<CreateVenvInterpreterOpti
 		bottomRow.createSpan({cls: "kernel-suggestion-path", text: item.path});
 	}
 
-	async onChooseItem(item: CreateVenvInterpreterOption) {
+	onChooseItem(item: CreateVenvInterpreterOption): void {
+		void this.chooseItem(item);
+	}
+
+	private async chooseItem(item: CreateVenvInterpreterOption): Promise<void> {
 		if (isCustomPathOption(item)) {
 			const valid = await validatePythonPath(item.path);
 			if (!valid) {
@@ -270,7 +274,7 @@ export class CreateVenvModal extends FuzzySuggestModal<CreateVenvInterpreterOpti
 	private addLoadingHint() {
 		const promptEl = this.containerEl.querySelector(".prompt-results");
 		if (promptEl) {
-			const hint = promptEl.createEl("div", {
+			const hint = promptEl.createDiv({
 				cls: "suggestion-empty",
 				text: "Discovering Python interpreters…",
 			});
