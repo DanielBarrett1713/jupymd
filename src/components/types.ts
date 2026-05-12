@@ -1,3 +1,6 @@
+import type JupyMDPlugin from "../main";
+import type {CodeExecutor} from "./CodeExecutor";
+
 export type JupyMDPluginSettings = {
 	autoSync: boolean;
 	bidirectionalSync: boolean;
@@ -29,6 +32,6 @@ export type PythonBlockProps = {
 	code?: string;
 	path?: string;
 	index?: number;
-	executor?: any;
-	plugin?: any;
+	executor: CodeExecutor;
+	plugin: JupyMDPlugin;
 }
