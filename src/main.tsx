@@ -1,4 +1,4 @@
-import {Plugin, TFile, TAbstractFile, MarkdownView, Notice, setTooltip} from "obsidian";
+import {Plugin, TFile, TAbstractFile, MarkdownView, Notice, setTooltip, WorkspaceLeaf} from "obsidian";
 import {JupyMDSettingTab} from "./components/Settings";
 import {CodeExecutor} from "./components/CodeExecutor";
 import {FileSync} from "./components/FileSync";
@@ -13,6 +13,10 @@ import {getDefaultPythonPath} from "./utils/pythonPathUtils";
 import * as fs from "fs";
 import * as path from "path";
 
+type RebuildableWorkspaceLeaf = WorkspaceLeaf & {
+	rebuildView?: () => void;
+};
+
 export default class JupyMDPlugin extends Plugin {
 	settings: JupyMDPluginSettings;
 	executor: CodeExecutor;
@@ -21,7 +25,14 @@ export default class JupyMDPlugin extends Plugin {
 	private kernelStatusBarItem : HTMLElement;
 	private settingTab : JupyMDSettingTab;
 
-	async onload() {
+	onload(): void {
+		void this.initialize().catch((error) => {
+			console.error("Failed to load JupyMD:", error);
+			new Notice("Failed to load JupyMD, check console for details.");
+		});
+	}
+
+	private async initialize(): Promise<void> {
 		await this.loadSettings();
 
 		if (!this.settings.pythonInterpreter) {
@@ -45,15 +56,15 @@ export default class JupyMDPlugin extends Plugin {
 		this.addSettingTab(this.settingTab);
 
 		this.registerEvent(
-			this.app.vault.on("modify", async (file: TAbstractFile) => {
+			this.app.vault.on("modify", (file: TAbstractFile) => {
 				if (file instanceof TFile && this.settings.autoSync) {
-					await this.fileSync.handleSync(file);
+					void this.fileSync.handleSync(file);
 				}
 			})
 		);
 
 		this.registerEvent(
-			this.app.vault.on("delete", async (file: TAbstractFile) => {
+			this.app.vault.on("delete", (file: TAbstractFile) => {
 				if (file instanceof TFile && file.extension === "md") {
 					try {
 						const mdPath = getAbsolutePath(file);
@@ -70,7 +81,7 @@ export default class JupyMDPlugin extends Plugin {
 		);
 
 		this.registerEvent(
-			this.app.vault.on("rename", async (file: TAbstractFile, oldPath: string) => {
+			this.app.vault.on("rename", (file: TAbstractFile, oldPath: string) => {
 				if (file instanceof TFile && file.extension === "md") {
 					try {
 						const newMdPath = getAbsolutePath(file);
@@ -85,7 +96,7 @@ export default class JupyMDPlugin extends Plugin {
 							this.app.workspace.getLeavesOfType("markdown").forEach((leaf) => {
 								const view = leaf.view;
 								if (view instanceof MarkdownView && view.file?.path === file.path) {
-									(leaf as any).rebuildView();
+									(leaf as RebuildableWorkspaceLeaf).rebuildView?.();
 								}
 							});
 						}
@@ -116,69 +127,66 @@ export default class JupyMDPlugin extends Plugin {
 				"python",
 				async (source, el, ctx) => {
 					el.empty();
-					const reactRoot = document.createElement("div");
-					el.appendChild(reactRoot);
+					const reactRoot = el.createDiv();
+					const root = createRoot(reactRoot);
 
 					const activeFile = this.app.vault.getFileByPath(ctx.sourcePath);
+					const renderCodeBlock = (filePath?: string, index: number = 0) => {
+						root.render(
+							<PythonCodeBlock
+								code={source}
+								path={filePath}
+								index={index}
+								executor={this.executor}
+								plugin={this}
+							/>
+						);
+					};
 
 					let index = 0;
 					if (activeFile instanceof TFile) {
 						const filePath = getAbsolutePath(activeFile);
-						const fileContent = await this.app.vault.read(activeFile);
-						const lines = fileContent.split("\n");
-						let blockCount = 0;
-						let foundCurrentBlock = false;
+						try {
+							const fileContent = await this.app.vault.read(activeFile);
+							const lines = fileContent.split("\n");
+							let blockCount = 0;
+							let foundCurrentBlock = false;
 
-						const sectionInfo = ctx.getSectionInfo(el);
-						if (!sectionInfo) {
-							const root = createRoot(reactRoot);
-							root.render(
-								<PythonCodeBlock
-									code={source}
-									path={filePath}
-									index={0}
-									executor={this.executor}
-									plugin={this}
-								/>
-							);
-							return;
-						}
+							const sectionInfo = ctx.getSectionInfo(el);
+							if (!sectionInfo) {
+								renderCodeBlock(filePath);
+								return;
+							}
 
-						for (let i = 0; i < lines.length; i++) {
-							const line = lines[i].trim();
-							if (line.startsWith("```python")) {
-								if (i < sectionInfo.lineStart) {
-									blockCount++;
-								} else if (i === sectionInfo.lineStart) {
-									foundCurrentBlock = true;
-									break;
+							for (let i = 0; i < lines.length; i++) {
+								const line = lines[i].trim();
+								if (line.startsWith("```python")) {
+									if (i < sectionInfo.lineStart) {
+										blockCount++;
+									} else if (i === sectionInfo.lineStart) {
+										foundCurrentBlock = true;
+										break;
+									}
 								}
 							}
+
+							if (foundCurrentBlock) {
+								index = blockCount;
+							}
+						} catch (error) {
+							console.error("Failed to resolve Python code block position:", error);
 						}
 
-						if (foundCurrentBlock) {
-							index = blockCount;
-							createRoot(reactRoot).render(
-								<PythonCodeBlock
-									code={source}
-									path={filePath}
-									index={index}
-									executor={this.executor}
-									plugin={this}
-								/>
-							);
-						}
+						renderCodeBlock(filePath, index);
 					} else {
-						createRoot(reactRoot).render(
-							<PythonCodeBlock code={source}/>
-						);
+						renderCodeBlock();
 					}
 				}
 			);
 		}
 	}
 
-	async onunload() {
+	onunload(): void {
 		this.executor.cleanup();
 	}
 
