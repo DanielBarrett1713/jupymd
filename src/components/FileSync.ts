@@ -1,15 +1,23 @@
-import {App, Notice, TFile, MarkdownView} from "obsidian";
-import {exec, execFile} from "child_process";
+import {App, Notice, TFile, MarkdownView, WorkspaceLeaf} from "obsidian";
+import {exec} from "child_process";
 import {getAbsolutePath, isNotebookPaired, runJupytext} from "../utils/helpers";
 import {JupyMDPluginSettings} from "./types";
 import * as fs from "fs";
+
+type RebuildableWorkspaceLeaf = WorkspaceLeaf & {
+	rebuildView?: () => void;
+};
+
+function getErrorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
 
 export class FileSync {
 	private readonly pythonPath: string;
 	private settings: JupyMDPluginSettings;
 
 	private lastSyncTime: number = 0;
-	private syncDebounceTimeout: NodeJS.Timeout | null = null;
+	private syncDebounceTimeout: number | null = null;
 	private readonly SYNC_DEADTIME_MS = 1500;
 	private readonly DEBOUNCE_DELAY_MS = 500;
 
@@ -34,14 +42,14 @@ export class FileSync {
 		}
 
 		if (this.syncDebounceTimeout) {
-			clearTimeout(this.syncDebounceTimeout);
+			activeWindow.clearTimeout(this.syncDebounceTimeout);
 		}
 
-		this.syncDebounceTimeout = setTimeout(async () => {
+		this.syncDebounceTimeout = activeWindow.setTimeout(() => {
 			this.syncDebounceTimeout = null;
 
 			if (!this.isSyncBlocked()) {
-				await this.performSync(targetFile);
+				void this.performSync(targetFile);
 			}
 		}, this.DEBOUNCE_DELAY_MS);
 
@@ -69,51 +77,32 @@ export class FileSync {
 
 		const fileNames = files.map(f => f.path);
 		const selected = await new Promise<string | null>((resolve) => {
-			const modal = document.createElement('div');
-			modal.style.position = 'fixed';
-			modal.style.top = '30%';
-			modal.style.left = '50%';
-			modal.style.transform = 'translate(-50%, -50%)';
-			modal.style.background = 'var(--background-primary)';
-			modal.style.padding = '2em';
-			modal.style.borderRadius = '8px';
-			modal.style.zIndex = '9999';
-			modal.style.boxShadow = '0 2px 16px rgba(0,0,0,0.2)';
+			const modal = activeDocument.body.createDiv({cls: "jupymd-convert-modal"});
+			modal.createDiv({
+				cls: "jupymd-convert-label",
+				text: "Select a Jupyter notebook to convert:",
+			});
 
-			const label = document.createElement('div');
-			label.textContent = 'Select a Jupyter notebook to convert:';
-			label.style.marginBottom = '1em';
-			modal.appendChild(label);
-
-			const select = document.createElement('select');
-			select.style.width = '100%';
+			const select = modal.createEl('select', {cls: "jupymd-convert-select"});
 			for (const name of fileNames) {
-				const option = document.createElement('option');
+				const option = select.createEl('option');
 				option.value = name;
 				option.textContent = name;
-				select.appendChild(option);
 			}
-			modal.appendChild(select);
 
-			const btn = document.createElement('button');
+			const btn = modal.createEl('button', {cls: "jupymd-convert-button"});
 			btn.textContent = 'Convert';
-			btn.style.marginTop = '1em';
 			btn.onclick = () => {
-				document.body.removeChild(modal);
+				modal.remove();
 				resolve(select.value);
 			};
-			modal.appendChild(btn);
 
-			const cancel = document.createElement('button');
+			const cancel = modal.createEl('button', {cls: "jupymd-convert-button jupymd-convert-cancel"});
 			cancel.textContent = 'Cancel';
-			cancel.style.marginLeft = '1em';
 			cancel.onclick = () => {
-				document.body.removeChild(modal);
+				modal.remove();
 				resolve(null);
 			};
-			modal.appendChild(cancel);
-
-			document.body.appendChild(modal);
 		});
 
 		if (!selected) return;
@@ -134,10 +123,10 @@ export class FileSync {
 			);
 
 			if (mdRelative) {
-				this.app.workspace.openLinkText(mdRelative.path, '', true);
+				await this.app.workspace.openLinkText(mdRelative.path, '', true);
 			}
-		} catch (error: any) {
-			new Notice(`Failed to convert notebook: ${error.message}`);
+		} catch (error) {
+			new Notice(`Failed to convert notebook: ${getErrorMessage(error)}`);
 		}
 	}
 
@@ -183,13 +172,13 @@ export class FileSync {
 					view?.getViewType() ?? ""
 				)[0];
 
-				(leaf as any).rebuildView();
+				(leaf as RebuildableWorkspaceLeaf).rebuildView?.();
 			}
 
 			new Notice(`Notebook created and paired: ${ipynbPath}`);
 			return true;
-		} catch (error: any) {
-			new Notice(`Failed to create notebook: ${error.message}`);
+		} catch (error) {
+			new Notice(`Failed to create notebook: ${getErrorMessage(error)}`);
 			return false;
 		}
 	}
@@ -232,8 +221,8 @@ export class FileSync {
 			// `--sync` updates the paired notebook from markdown changes while preserving
 			// existing notebook outputs instead of recreating the .ipynb from scratch.
 			await runJupytext(this.pythonPath, ["--sync", ipynbPath]);
-		} catch (error: any) {
-			console.error(`Failed to sync Markdown file: ${error.message}`);
+		} catch (error) {
+			console.error(`Failed to sync Markdown file: ${getErrorMessage(error)}`);
 		}
 	}
 }
