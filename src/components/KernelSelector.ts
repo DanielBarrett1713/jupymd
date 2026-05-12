@@ -81,13 +81,13 @@ export class KernelSelectorModal extends FuzzySuggestModal<KernelOption> {
 		super.onOpen();
 		this.addLoadingHint();
 		this.emptyStateText = "Type a Python path to use it directly.";
-		this.loadKernels();
+		void this.loadKernels();
 	}
 
 	private addLoadingHint() {
 		const promptEl = this.containerEl.querySelector(".prompt-results");
 		if (promptEl) {
-			const hint = promptEl.createEl("div", {
+			const hint = promptEl.createDiv({
 				cls: "suggestion-empty",
 				text: "Discovering Python environments…",
 			});
@@ -184,7 +184,11 @@ export class KernelSelectorModal extends FuzzySuggestModal<KernelOption> {
 		bottomRow.createSpan({cls: "kernel-suggestion-path", text: item.path});
 	}
 
-	async onChooseItem(item: KernelOption) {
+	onChooseItem(item: KernelOption): void {
+		void this.chooseItem(item);
+	}
+
+	private async chooseItem(item: KernelOption): Promise<void> {
 		if (isCreateVenvOption(item)) {
 			const config = await new CreateVenvModal(
 				this.app,
