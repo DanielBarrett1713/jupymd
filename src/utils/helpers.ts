@@ -21,10 +21,10 @@ export async function runJupytext(pythonPath: string, args: string[]): Promise<v
 			execFile(
 				pythonPath,
 				["-m", "jupytext", ...args],
-				(error, stdout, stderr) => {
+				(error, _stdout, stderr) => {
 					if (error) {
 						console.error(stderr || error.message);
-						reject(error);
+						reject(new Error(stderr || error.message));
 						return;
 					}
 					resolve();
@@ -57,7 +57,7 @@ export async function installLibs(interpreter: string, libraries: string): Promi
 	const command = `${shellQuote(interpreter)} -m pip install ${libraries}`
 
 	try {
-		const {stdout, stderr} = await execAsync(command)
+		const {stderr} = await execAsync(command)
 
 		new Notice(`Required libraries installed for ${interpreter}`)
 
