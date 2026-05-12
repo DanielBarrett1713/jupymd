@@ -68,20 +68,14 @@ function getVenvPythonPath(envDir: string): string {
 		: path.join(envDir, "bin", "python");
 }
 
-function getPyenvRoots(): string[] {
-	const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-	const roots = Platform.isWin
-		? [
-			process.env.PYENV_ROOT || "",
-			path.join(homeDir, ".pyenv", "pyenv-win"),
-			path.join(homeDir, ".pyenv"),
-		]
-		: [
-			process.env.PYENV_ROOT || "",
-			path.join(homeDir, ".pyenv"),
-		];
-
-	return Array.from(new Set(roots.filter(Boolean)));
+async function getPyenvRoots(): Promise<string[]> {
+	try {
+		const {stdout} = await execAsync("pyenv root", {timeout: 3000});
+		const pyenvRoot = stdout.trim();
+		return pyenvRoot ? [pyenvRoot] : [];
+	} catch {
+		return [];
+	}
 }
 
 function getPyenvVersionPythonPath(versionDir: string): string {
@@ -90,10 +84,10 @@ function getPyenvVersionPythonPath(versionDir: string): string {
 		: path.join(versionDir, "bin", "python");
 }
 
-function getPyenvInterpreterCandidates(): string[] {
+async function getPyenvInterpreterCandidates(): Promise<string[]> {
 	const candidates: string[] = [];
 
-	for (const pyenvRoot of getPyenvRoots()) {
+	for (const pyenvRoot of await getPyenvRoots()) {
 		candidates.push(
 			path.join(pyenvRoot, "shims", "python"),
 			path.join(pyenvRoot, "shims", "python3")
@@ -121,12 +115,12 @@ function getPyenvInterpreterCandidates(): string[] {
 	return Array.from(new Set(candidates));
 }
 
-function isPyenvInterpreterCandidate(candidate: string): boolean {
+async function isPyenvInterpreterCandidate(candidate: string): Promise<boolean> {
 	if (!path.isAbsolute(candidate)) {
 		return false;
 	}
 
-	return getPyenvRoots().some((pyenvRoot) => {
+	return (await getPyenvRoots()).some((pyenvRoot) => {
 		const shimsDir = path.join(pyenvRoot, "shims");
 		const versionsDir = path.join(pyenvRoot, "versions");
 		return candidate.startsWith(`${shimsDir}${path.sep}`) || candidate.startsWith(`${versionsDir}${path.sep}`);
@@ -165,13 +159,12 @@ async function discoverVenvs(app: App): Promise<KernelInfo[]> {
 	return results;
 }
 
-function getGlobalInterpreterCandidates(): string[] {
+async function getGlobalInterpreterCandidates(): Promise<string[]> {
 	const candidates = Platform.isWin
 		? [
 			"python",
 			"python3",
-			path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python313", "python.exe"),
-			path.join(process.env.LOCALAPPDATA || "", "Programs", "Python", "Python312", "python.exe"),
+			"py",
 		]
 		: [
 			"python3",
@@ -187,16 +180,16 @@ function getGlobalInterpreterCandidates(): string[] {
 
 	return Array.from(new Set([
 		...candidates,
-		...getPyenvInterpreterCandidates(),
+		...await getPyenvInterpreterCandidates(),
 	]));
 }
 
 async function discoverGlobalInterpreters(): Promise<KernelInfo[]> {
 	const results: KernelInfo[] = [];
 
-	for (const candidate of getGlobalInterpreterCandidates()) {
+	for (const candidate of await getGlobalInterpreterCandidates()) {
 		const label = path.isAbsolute(candidate) ? path.basename(candidate) : candidate;
-		const source = isPyenvInterpreterCandidate(candidate) ? "pyenv" : undefined;
+		const source = await isPyenvInterpreterCandidate(candidate) ? "pyenv" : undefined;
 		const result = await probeInterpreter(candidate, label, "system", source);
 		if (result) {
 			results.push(result);
