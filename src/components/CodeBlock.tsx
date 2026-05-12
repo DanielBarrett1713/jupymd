@@ -41,7 +41,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 	const notifyOutputsUpdated = () => {
 		if (!path) return;
 
-		document.dispatchEvent(new CustomEvent(OUTPUTS_UPDATED_EVENT, {
+		activeDocument.dispatchEvent(new CustomEvent(OUTPUTS_UPDATED_EVENT, {
 			detail: {path},
 		}));
 	};
@@ -86,7 +86,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 			const ipynbPath = path.replace(/\.md$/, ".ipynb");
 			try {
 				await fs.access(ipynbPath);
-			} catch (e) {
+			} catch {
 				return [];
 			}
 			const raw = await fs.readFile(ipynbPath, "utf-8");
@@ -101,7 +101,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 	};
 
 	const reindexBlock = async () => {
-		if (!path) return;
+		if (!path || !activeFile) return;
 
 		if (!await isNotebookPaired(plugin.app, activeFile)) {
 			return;
@@ -121,7 +121,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 	};
 
 	const renderOutputs = async () => {
-		if (!executor || !path || currentIndex === undefined) return;
+		if (!executor || !path || !activeFile || currentIndex === undefined) return;
 
 		try {
 			if (!await isNotebookPaired(plugin.app, activeFile)) {
@@ -133,7 +133,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 			const ipynbPath = path.replace(/\.md$/, ".ipynb");
 			try {
 				await fs.access(ipynbPath);
-			} catch (e) {
+			} catch {
 				return;
 			}
 			
@@ -218,7 +218,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 					return;
 				}
 
-				setTimeout(checkSync, SYNC_CHECK_INTERVAL);
+				activeWindow.setTimeout(checkSync, SYNC_CHECK_INTERVAL);
 			};
 
 			checkSync();
@@ -253,20 +253,22 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 
 			await reindexBlock();
 
-			setTimeout(async () => {
-				await renderOutputs();
-				notifyOutputsUpdated();
-				try {
-					await fs.utimes(path, new Date(), new Date());
-				} catch(e) {
-					// ignore
-				}
-				/* when the output is pushed to the .ipynb file, the modification time 
-				of it becomes more recent than the markdown file's. this causes the sync
-				to be biased towards the .ipynb file which in reality is older than the
-				markdown file. to mitigate, the markdown file is force modified after the 
-				output is pushed to the .ipynb file. */
-				setIsLoading(false);
+			activeWindow.setTimeout(() => {
+				void (async () => {
+					await renderOutputs();
+					notifyOutputsUpdated();
+					try {
+						await fs.utimes(path, new Date(), new Date());
+					} catch {
+						// ignore
+					}
+					/* when the output is pushed to the .ipynb file, the modification time
+					of it becomes more recent than the markdown file's. this causes the sync
+					to be biased towards the .ipynb file which in reality is older than the
+					markdown file. to mitigate, the markdown file is force modified after the
+					output is pushed to the .ipynb file. */
+					setIsLoading(false);
+				})();
 			}, 100);
 		} catch (err) {
 			console.error("Error executing code:", err);
@@ -302,7 +304,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 
 			try {
 				await fs.access(ipynbPath);
-			} catch (e) {
+			} catch {
 				return;
 			}
 
@@ -325,22 +327,22 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 	};
 
 	useEffect(() => {
-		const interval = setInterval(() => {
+		const interval = activeWindow.setInterval(() => {
 			if (code !== prevCodeRef.current || currentIndex === undefined || currentIndex >= blockCount) {
-				reindexBlock();
+				void reindexBlock();
 				prevCodeRef.current = code;
 			}
 		}, 2000);
 
-		return () => clearInterval(interval);
+		return () => activeWindow.clearInterval(interval);
 	}, [path, code, currentIndex, blockCount]);
 
 	useEffect(() => {
-		reindexBlock();
+		void reindexBlock();
 	}, [path, code]);
 
 	useEffect(() => {
-		renderOutputs();
+		void renderOutputs();
 	}, [currentIndex]);
 
 	useEffect(() => {
@@ -350,11 +352,11 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 				setIsPaired(paired);
 			}
 		};
-		checkPairing();
+		void checkPairing();
 
-		const eventRef = plugin.app.metadataCache.on("changed", (file: { path: any; }) => {
+		const eventRef = plugin.app.metadataCache.on("changed", (file: { path: string; }) => {
 			if (activeFile && file.path === activeFile.path) {
-				checkPairing();
+				void checkPairing();
 			}
 		});
 
@@ -382,12 +384,12 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 			}
 		};
 
-		document.addEventListener("mousedown", handleDocumentMouseDown);
-		document.addEventListener("keydown", handleDocumentKeyDown);
+		activeDocument.addEventListener("mousedown", handleDocumentMouseDown);
+		activeDocument.addEventListener("keydown", handleDocumentKeyDown);
 
 		return () => {
-			document.removeEventListener("mousedown", handleDocumentMouseDown);
-			document.removeEventListener("keydown", handleDocumentKeyDown);
+			activeDocument.removeEventListener("mousedown", handleDocumentMouseDown);
+			activeDocument.removeEventListener("keydown", handleDocumentKeyDown);
 		};
 	}, []);
 
@@ -408,12 +410,12 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 			const viewportPadding = 8;
 
 			let left = anchorRect.left;
-			if (left + menuRect.width > window.innerWidth - viewportPadding) {
-				left = Math.max(viewportPadding, window.innerWidth - menuRect.width - viewportPadding);
+			if (left + menuRect.width > activeWindow.innerWidth - viewportPadding) {
+				left = Math.max(viewportPadding, activeWindow.innerWidth - menuRect.width - viewportPadding);
 			}
 
 			let top = anchorRect.bottom + gutter;
-			const fitsBelow = top + menuRect.height <= window.innerHeight - viewportPadding;
+			const fitsBelow = top + menuRect.height <= activeWindow.innerHeight - viewportPadding;
 			const aboveTop = anchorRect.top - menuRect.height - gutter;
 			if (!fitsBelow && aboveTop >= viewportPadding) {
 				top = aboveTop;
@@ -423,12 +425,12 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 		};
 
 		updateRunMenuPosition();
-		window.addEventListener("resize", updateRunMenuPosition);
-		window.addEventListener("scroll", updateRunMenuPosition, true);
+		activeWindow.addEventListener("resize", updateRunMenuPosition);
+		activeWindow.addEventListener("scroll", updateRunMenuPosition, true);
 
 		return () => {
-			window.removeEventListener("resize", updateRunMenuPosition);
-			window.removeEventListener("scroll", updateRunMenuPosition, true);
+			activeWindow.removeEventListener("resize", updateRunMenuPosition);
+			activeWindow.removeEventListener("scroll", updateRunMenuPosition, true);
 		};
 	}, [isRunMenuOpen]);
 
@@ -443,10 +445,10 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 			void renderOutputs();
 		};
 
-		document.addEventListener(OUTPUTS_UPDATED_EVENT, handleOutputsUpdated);
+		activeDocument.addEventListener(OUTPUTS_UPDATED_EVENT, handleOutputsUpdated);
 
 		return () => {
-			document.removeEventListener(OUTPUTS_UPDATED_EVENT, handleOutputsUpdated);
+			activeDocument.removeEventListener(OUTPUTS_UPDATED_EVENT, handleOutputsUpdated);
 		};
 	}, [path, code, currentIndex, blockCount, activeFile]);
 
@@ -459,7 +461,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 						ref={runMenuRef}
 					>
 						<button
-							onClick={handleRun}
+							onClick={() => { void handleRun(); }}
 							disabled={isLoading}
 							className="split-run-button split-run-button-main"
 							aria-label="Run cell"
@@ -492,7 +494,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 							} : undefined}
 						>
 							<button
-								onClick={handleRunAbove}
+								onClick={() => { void handleRunAbove(); }}
 								disabled={isLoading || currentIndex === 0}
 								className="run-dropdown-item"
 								role="menuitem"
@@ -501,7 +503,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 								<RunAboveIcon className="icon grey-icon"/>
 							</button>
 							<button
-								onClick={handleRunCellAndBelow}
+								onClick={() => { void handleRunCellAndBelow(); }}
 								disabled={isLoading}
 								className="run-dropdown-item"
 								role="menuitem"
@@ -510,10 +512,10 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 								<RunBelowIcon className="icon grey-icon"/>
 							</button>
 						</div>,
-						document.body
+						activeDocument.body
 					)}
 					<button
-						onClick={handleClear}
+						onClick={() => { void handleClear(); }}
 						disabled={!hasOutput}
 						className="icon-button"
 						aria-label="Clear output"
@@ -528,7 +530,7 @@ export const PythonCodeBlock: React.FC<PythonBlockProps> = ({
 
 			<div
 				ref={codeBlockRef}
-				onClick={handleEditClick}
+				onClick={() => { void handleEditClick(); }}
 				style={{cursor: 'text'}}
 			>
 				<HighlightedCodeBlock
