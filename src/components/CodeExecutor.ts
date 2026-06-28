@@ -335,24 +335,65 @@ import io
 import base64
 import traceback
 import json
+import os
+import subprocess
+import timeit
 from contextlib import redirect_stdout, redirect_stderr
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use("Agg")
+
+def preprocess_magic(code_str):
+    stripped = code_str.strip()
+
+    # !cmd - shell command
+    if stripped.startswith("!"):
+        cmd = stripped[1:].strip()
+        return f"print((__import__('subprocess').run('{cmd}', shell=True, capture_output=True, text=True).stdout or ''))"
+
+    # %%time - cell magic, strip the %%time line
+    if stripped.startswith("%%time"):
+        lines = stripped.split("\\n")
+        if len(lines) > 1:
+            return "\\n".join(lines[1:])
+        return ""
+
+    # %timeit xxx - line magic
+    if stripped.startswith("%timeit "):
+        expr = stripped[8:].strip()
+        return f"timeit.timeit({repr(expr)}, number=1000) / 1000"
+
+    # %matplotlib inline - line magic (no-op: JupyMD already uses Agg backend + manual capture)
+    if stripped.startswith("%matplotlib inline"):
+        return ""
+
+    # %env VAR - line magic
+    if stripped.startswith("%env "):
+        var = stripped[5:].strip()
+        return f"print(__import__('os').environ.get('{var}', 'not set'))"
+
+    return code_str
 
 def execute_code(code_str):
     _stdout = io.StringIO()
     _stderr = io.StringIO()
     _img_buf = io.BytesIO()
     _img_data = ""
-    
+
     _fig_before = plt.get_fignums()
-    
+
+    # Detect magic commands before any transformation
+    is_magic = code_str.strip().startswith("!") or \
+               code_str.strip().startswith("%") or \
+               code_str.strip().startswith("%%")
+
     try:
         try:
+            code_str = preprocess_magic(code_str)
             parsed = ast.parse(code_str.strip())
-			# Check if this is a single expression
+			# Check if this is a single expression (skip for magic commands)
             is_single_expression = (
+            not is_magic and
             len(parsed.body) == 1 and  # Only one thing in the code
             isinstance(parsed.body[0], ast.Expr)  # And that thing is an expression
             )
@@ -360,7 +401,7 @@ def execute_code(code_str):
             if is_single_expression:
                 # For single expressions, we want to capture and display the result
                 compiled_code = compile(code_str, '<string>', 'eval')  # Use 'eval' mode
-                
+
                 with redirect_stdout(_stdout), redirect_stderr(_stderr):
                     result = eval(compiled_code)
                     if result is not None:
